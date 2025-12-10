@@ -1,0 +1,35 @@
+.container {
+    color: #ffffff;
+    display: flex;
+    align-items: center;
+    flex-direction: column;
+    background: #131316;
+}
+
+.control-panel {
+    margin-top: 30px;
+    background: #2a2a2a;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+}
+
+.control-panel input,
+.control-panel select,
+.control-panel button {
+    padding: 10px;
+    margin: 5px;
+    background: #333;
+    color: white;
+    border: 1px solid #555;
+}
+
+.control-panel button {
+    background: #2196F3;
+    cursor: pointer;
+}
+
+.control-panel h3 {
+    margin-left: 5px;
+    margin-bottom: 10px;
+}

@@ -1,0 +1,63 @@
+.container {
+    color: #ffffff;
+    display: flex;
+    align-items: center;
+    flex-direction: column;
+    background: #131316;
+}
+
+.stock {
+    color: #ffffff;
+    font-size: 40px;
+    margin-top: 40px;
+    margin-bottom: 5px;
+}
+
+.stock span {
+    color: #0ecb81;
+}
+
+#last-updated {
+    margin-bottom: 15px;
+}
+
+.market-window {
+    display: flex;
+    flex-direction: column;
+    width: 44%;
+    background-color: #1e1e1e;
+    padding: 10px;
+    align-items: center;
+    gap: 10px;
+    border-radius: 10px;
+    border: 1px solid #ffffff;
+}
+
+.market-container {
+    display: flex;
+    justify-content: space-between;
+    width: 560px;
+}
+
+.prices {
+    width: 100%;
+}
+
+.prices tr {
+    text-align: right;
+}
+
+.prices td {
+    padding-top: 8px;
+    font-weight: bold;
+}
+
+.bid-row { color: #0ecb81; } /* Green */
+.offer-row { color: #f6465d; } /* Red */
+.qty-row { color: #f6d33c }
+
+.prices th { 
+    padding-bottom: 8px;  
+    border-bottom: 1px solid #333;
+    color: #abbfc9;
+}
