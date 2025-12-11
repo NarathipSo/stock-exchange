@@ -4,13 +4,13 @@ import './Order.css'
 const Order = ({ refresh }) => {
     const [userId, setUserId] = useState();
     const [stock_symbol, setStockSymbol] = useState();
-    const [type, setType] = useState();
+    const [type, setType] = useState("BUY");
     const [price, setPrice] = useState();
     const [qty, setQty] = useState();
     
     const handleSubmit = async (e) => {
         e.preventDefault();
-        await fetch('http://localhost:3001/api/orders', {
+        const res = await fetch(`${import.meta.env.VITE_API_URL}/api/orders`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -21,7 +21,20 @@ const Order = ({ refresh }) => {
             quantity: parseFloat(qty)
             })
         });
+
+        const data = await res.json();
+        if (!res.ok) {
+            alert(data.error);
+            return;
+        }
+        
         refresh();
+
+        setUserId('');
+        setStockSymbol('');
+        setType('BUY');
+        setPrice('');
+        setQty('');
     }
     
     

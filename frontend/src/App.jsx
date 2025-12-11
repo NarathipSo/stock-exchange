@@ -2,6 +2,9 @@ import Header from "./components/header/Header.jsx";
 import StockInfo from "./components/stockInfo/StockInfo.jsx";
 import Order from "./components/order/Order.jsx";
 import { useState, useEffect } from "react";
+import io from 'socket.io-client';
+
+const socket = io(import.meta.env.VITE_API_URL);
 
 function App() {
   const [orderBook, setOrderBook] = useState({ bids: [], offers: [], currentPrice: [{price: 0}] });
@@ -9,7 +12,7 @@ function App() {
 
   const fetchOrderBook = async () => {
     try {
-      const res = await fetch("http://localhost:3001/api/orderbook/GOOGL");
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/orderbook/GOOGL`);
       const data = await res.json();
 
       setOrderBook(data);
@@ -21,8 +24,17 @@ function App() {
 
   useEffect(() => {
     fetchOrderBook();
-    const interval = setInterval(fetchOrderBook, 1000);
-    return () => clearInterval(interval);
+
+    // Listen for "orderbook_update" event from Server
+    socket.on('orderbook_update', () => {
+        console.log("Real-time update received!");
+        fetchOrderBook();
+    });
+
+    // Cleanup listener on unmount
+    return () => {
+        socket.off('orderbook_update');
+    };
   }, []);
 
   return (

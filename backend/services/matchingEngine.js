@@ -86,21 +86,20 @@ const matchOrder = async (orderId) => {
 
             // Update Buyer
             await connection.execute(
-                `UPDATE users SET balance_fiat = balance_fiat - ?, balance_stock_symbol = balance_stock_symbol + ? WHERE id = ?`,
-                [totalValue, delta, buyerId]
+                `UPDATE users SET balance_stock_symbol = balance_stock_symbol + ? WHERE id = ?`,
+                [delta, buyerId]
             );
 
             // Update Seller
             await connection.execute(
-                `UPDATE users SET balance_fiat = balance_fiat + ?, balance_stock_symbol = balance_stock_symbol - ? WHERE id = ?`,
-                [totalValue, delta, sellerId]
+                `UPDATE users SET balance_fiat = balance_fiat + ? WHERE id = ?`,
+                [totalValue, sellerId]
             );
 
             console.log(`Matched ${delta} shares @ ${price} ${incomingOrder.stock_symbol} Buyer: ${buyerId} Seller: ${sellerId}`);
         }
 
         await connection.commit(); // SAVE EVERYTHING
-        console.log("Matching complete.");
 
     } catch (error) {
         await connection.rollback(); // UNDO EVERYTHING if error
