@@ -8,7 +8,6 @@ const socket = io(import.meta.env.VITE_API_URL);
 
 function App() {
   const [orderBook, setOrderBook] = useState({ bids: [], offers: [], currentPrice: [{price: 0}] });
-  const [lastUpdated, setLastUpdated] = useState();
 
   const fetchOrderBook = async () => {
     try {
@@ -16,7 +15,6 @@ function App() {
       const data = await res.json();
 
       setOrderBook(data);
-      setLastUpdated(new Date().toLocaleTimeString());
     } catch (error) {
       console.error("Failed to fetch order book", error);
     }
@@ -40,7 +38,7 @@ function App() {
   return (
     <>
       <Header />
-      <StockInfo orderBook={orderBook} lastUpdated={lastUpdated} />
+      <StockInfo orderBook={orderBook} />
       <Order refresh={fetchOrderBook} />
     </>
   );

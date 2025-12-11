@@ -4,7 +4,6 @@ const StockInfo = ({ orderBook, lastUpdated }) => {
   return (
     <div className="container">
       <h1 className="stock"><span>{orderBook.currentPrice[0].price}</span> &nbsp; GOOGL</h1>
-      <p id="last-updated">Last Updated: {lastUpdated}</p>
 
       <div className="market-container">
         <div className="market-window">

@@ -67,7 +67,11 @@ exports.placeOrder = async (req, res) => {
         });
 
         // 6. Trigger the Matching Engine
-        await matchOrder(result.insertId);
+        const matchedFlag = await matchOrder(result.insertId);
+
+        if (matchedFlag) {
+            req.io.emit('orderbook_update', { message: 'Order matched' });
+        }
 
     } catch (error) {
         // If anything goes wrong, roll back changes
