@@ -1,7 +1,8 @@
 const db = require('../db');
 
 const matchOrder = async (orderId) => {
-    let matchedFlag = false;
+    let matched = false;
+    let symbol = null;
     const connection = await db.getConnection(); // Get one connection for the whole process
 
     try {
@@ -21,6 +22,7 @@ const matchOrder = async (orderId) => {
         }
 
         const incomingOrder = rows[0];
+        symbol = incomingOrder.stock_symbol;
         let remainingQty = parseFloat(incomingOrder.quantity); // Track memory state
 
         // 2. Find Matchable Orders
@@ -98,7 +100,7 @@ const matchOrder = async (orderId) => {
             );
 
             console.log(`Matched ${delta} shares @ ${price} ${incomingOrder.stock_symbol} Buyer: ${buyerId} Seller: ${sellerId}`);
-            matchedFlag = true;
+            matched = true;
         }
 
         await connection.commit(); // SAVE EVERYTHING
@@ -108,7 +110,7 @@ const matchOrder = async (orderId) => {
         console.error("Matching Engine Error:", error);
     } finally {
         connection.release(); // Close connection
-        return matchedFlag;
+        return { matched, symbol };
     }
 };
 

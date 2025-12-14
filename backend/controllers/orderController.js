@@ -1,5 +1,5 @@
 const db = require('../db');
-const matchOrder = require('../services/matchingEngine');
+const queue = require('../queue');
 
 exports.placeOrder = async (req, res) => {
     // 1. Destructure the request body
@@ -59,19 +59,15 @@ exports.placeOrder = async (req, res) => {
         // 5. Commit the transaction (Save changes)
         await connection.commit();
 
-        req.io.emit('orderbook_update', { message: 'New order placed' });
-
         res.status(201).json({
             message: 'Order placed successfully',
             orderId: result.insertId
         });
 
-        // 6. Trigger the Matching Engine
-        const matchedFlag = await matchOrder(result.insertId);
-
-        if (matchedFlag) {
-            req.io.emit('orderbook_update', { message: 'Order matched' });
-        }
+        // 6. Push to Queue (Producer)
+        // We just send the ID. The worker will fetch the data.
+        await queue.lpush('matching_queue', JSON.stringify(result.insertId));
+        console.log(`Order ${result.insertId} pushed to queue`);
 
     } catch (error) {
         // If anything goes wrong, roll back changes

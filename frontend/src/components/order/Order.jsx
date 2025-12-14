@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import './Order.css'
 
-const Order = ({ refresh }) => {
+const Order = () => {
     const [userId, setUserId] = useState();
     const [stock_symbol, setStockSymbol] = useState();
     const [type, setType] = useState("BUY");
@@ -27,8 +27,6 @@ const Order = ({ refresh }) => {
             alert(data.error);
             return;
         }
-        
-        refresh();
 
         setUserId('');
         setStockSymbol('');

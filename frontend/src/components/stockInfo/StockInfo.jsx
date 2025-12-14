@@ -1,6 +1,38 @@
 import "./StockInfo.css";
+import { useState, useEffect } from "react";
+import io from 'socket.io-client';
 
-const StockInfo = ({ orderBook, lastUpdated }) => {
+const socket = io(import.meta.env.VITE_API_URL);
+
+const StockInfo = () => {
+  const [orderBook, setOrderBook] = useState({ bids: [], offers: [], currentPrice: [{price: 0}] });
+
+  const fetchOrderBook = async () => {
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/orderbook/GOOGL`);
+      const data = await res.json();
+
+      setOrderBook(data);
+    } catch (error) {
+      console.error("Failed to fetch order book", error);
+    }
+  };
+
+  useEffect(() => {
+    fetchOrderBook();
+
+    // Listen for "orderbook_update" event from Server
+    socket.on('orderbook_update', () => {
+        console.log("Real-time update received!");
+        fetchOrderBook();
+    });
+
+    // Cleanup listener on unmount
+    return () => {
+        socket.off('orderbook_update');
+    };
+  }, []);
+
   return (
     <div className="container">
       <h1 className="stock"><span>{orderBook.currentPrice[0].price}</span> &nbsp; GOOGL</h1>

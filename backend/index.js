@@ -3,7 +3,8 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const http = require('http');
 const { Server } = require('socket.io');
-
+const redisClient = require('./queue'); // Reuse our connection config
+const redisSubscriber = redisClient.duplicate(); // Create a dedicated connection for listening
 
 const orderRoutes = require('./routes/orderRoutes');
 
@@ -31,6 +32,10 @@ app.use((req, res, next) => {
 
 app.use('/api', orderRoutes);
 
+app.get('/', (req, res) => {
+    res.send('High Frequency Trading Engine is running!');
+});
+
 // Socket Connection Logic
 io.on('connection', (socket) => {
     console.log('User connected:', socket.id);
@@ -38,6 +43,20 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => {
         console.log('User disconnected', socket.id);
     });
+});
+
+// Subscribe to the Redis channel
+redisSubscriber.subscribe('trade_notifications', (err, count) => {
+    if (err) console.error("Failed to subscribe: %s", err.message);
+    else console.log(`Subscribed to ${count} channel(s).`);
+});
+// When a message arrives from the Worker...
+redisSubscriber.on('message', (channel, message) => {
+    console.log(`Received ${message} from ${channel}`);
+    const data = JSON.parse(message);
+    
+    // Broadcast to all connected mechanisms (Frontend)
+    io.emit('orderbook_update', data); 
 });
 
 server.listen(PORT, () => {
