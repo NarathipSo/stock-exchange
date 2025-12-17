@@ -3,6 +3,7 @@ const db = require('../db');
 const matchOrder = async (orderId) => {
     let matched = false;
     let symbol = null;
+    let trades = [];
     const connection = await db.getConnection(); // Get one connection for the whole process
 
     try {
@@ -26,7 +27,6 @@ const matchOrder = async (orderId) => {
         let remainingQty = parseFloat(incomingOrder.quantity); // Track memory state
 
         // 2. Find Matchable Orders
-        // Logic: If BUY, find cheap SELLS. If SELL, find expensive BUYS.
         let matchSql = '';
         if (incomingOrder.order_type === 'BUY') {
             matchSql = `SELECT * FROM order_book WHERE stock_symbol = ? AND order_type = 'SELL' AND price <= ? AND (status = 'OPEN' OR status = 'PARTIAL') ORDER BY price ASC, created_at ASC FOR UPDATE`;
@@ -38,16 +38,14 @@ const matchOrder = async (orderId) => {
 
         // 3. The Matching Loop
         for (const match of matchableOrders) {
-            if (remainingQty <= 0) break; // Stop if we are full
+            if (remainingQty <= 0) break;
 
-            // Calculate the trade amount
             const currentMatchQty = parseFloat(match.quantity);
             const delta = Math.min(remainingQty, currentMatchQty);
 
-            // Validation: Don't trade 0
             if (delta <= 0) continue;
 
-            const price = parseFloat(match.price); // Trade executes at MAKER price (FIFO rule)
+            const price = parseFloat(match.price);
 
             // --- A. CREATE TRADE RECORD ---
             await connection.execute(
@@ -71,7 +69,7 @@ const matchOrder = async (orderId) => {
             );
 
             // --- C. UPDATE INCOMING ORDER (TAKER) ---
-            remainingQty -= delta; // Update local tracker
+            remainingQty -= delta;
             const incomingStatus = remainingQty === 0 ? 'FILLED' : 'PARTIAL';
 
             await connection.execute(
@@ -80,9 +78,6 @@ const matchOrder = async (orderId) => {
             );
 
             // --- D. UPDATE BALANCES (The Money) ---
-            // Buyer: -Cash, +Stock
-            // Seller: +Cash, -Stock
-
             const buyerId = incomingOrder.order_type === 'BUY' ? incomingOrder.user_id : match.user_id;
             const sellerId = incomingOrder.order_type === 'BUY' ? match.user_id : incomingOrder.user_id;
             const totalValue = delta * price;
@@ -99,6 +94,13 @@ const matchOrder = async (orderId) => {
                 [totalValue, sellerId]
             );
 
+            trades.push({
+                symbol: incomingOrder.stock_symbol,
+                price: price,
+                quantity: delta,
+                timestamp: new Date()
+            });
+
             console.log(`Matched ${delta} shares @ ${price} ${incomingOrder.stock_symbol} Buyer: ${buyerId} Seller: ${sellerId}`);
             matched = true;
         }
@@ -110,7 +112,7 @@ const matchOrder = async (orderId) => {
         console.error("Matching Engine Error:", error);
     } finally {
         connection.release(); // Close connection
-        return { matched, symbol };
+        return { matched, symbol, trades };
     }
 };
 

@@ -15,7 +15,7 @@ async function processQueue() {
             console.log(`Received Job: Order ID ${orderId}`);
 
             // Run the CPU-heavy matching logic
-            const { matched, symbol } = await matchOrder(orderId);
+            const { matched, symbol, trades } = await matchOrder(orderId);
             
             if (symbol) {
                 await updateOrderBookCache(symbol);
@@ -26,6 +26,13 @@ async function processQueue() {
                 orderId: orderId,
                 symbol: symbol
             }));
+
+            if (trades && trades.length > 0) {
+                for (const trade of trades) {
+                    await redis.publish('market_data', JSON.stringify(trade));
+                    console.log(`[Event] Published trade for ${trade.symbol} @ ${trade.price}`);
+                }
+            }
             
         } catch (error) {
             console.error("Worker Error:", error);
