@@ -7,6 +7,7 @@ const redisClient = require('./queue'); // Reuse our connection config
 const redisSubscriber = redisClient.duplicate(); // Create a dedicated connection for listening
 
 const orderRoutes = require('./routes/orderRoutes');
+const marketRoutes = require('./routes/marketRoutes');
 
 dotenv.config();
 
@@ -31,6 +32,7 @@ app.use((req, res, next) => {
 });
 
 app.use('/api', orderRoutes);
+app.use('/api', marketRoutes);
 
 app.get('/', (req, res) => {
     res.send('High Frequency Trading Engine is running!');

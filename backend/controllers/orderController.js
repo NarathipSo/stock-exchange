@@ -64,10 +64,9 @@ exports.placeOrder = async (req, res) => {
             orderId: result.insertId
         });
 
-        // 6. Push to Queue (Producer)
-        // We just send the ID. The worker will fetch the data.
-        await queue.lpush('matching_queue', JSON.stringify(result.insertId));
-        console.log(`Order ${result.insertId} pushed to queue`);
+        // Add to stream 'orders_stream' with auto-ID ('*'). Field 'orderId' = value
+        await queue.xadd('orders_stream', '*', 'orderId', JSON.stringify(result.insertId));
+        console.log(`Order ${result.insertId} added to orders_stream`);
 
     } catch (error) {
         // If anything goes wrong, roll back changes
