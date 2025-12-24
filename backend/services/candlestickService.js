@@ -1,4 +1,5 @@
 const db = require('../db');
+const redis = require('../queue');
 
 let currentCandles = {}; 
 
@@ -54,6 +55,12 @@ const processTrade = async (trade) => {
             candle.volume += volume;
         }
     }
+
+    await redis.set(
+        `partial_candle:${symbol}`, 
+        JSON.stringify(currentCandles[symbol])
+    );
+    // console.log(`Partial candle saved for ${symbol}`);
 };
 
 const saveCandle = async (candle) => {
@@ -71,7 +78,7 @@ const saveCandle = async (candle) => {
         ];
         
         await db.query(sql, values);
-        console.log(`[Aggregator] Saved 1m candle for ${candle.symbol}`);
+        // console.log(`[Aggregator] Saved 1m candle for ${candle.symbol}`);
     } catch (err) {
         console.error("Failed to save candle:", err);
     }

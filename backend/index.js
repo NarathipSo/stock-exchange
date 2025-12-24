@@ -47,18 +47,18 @@ io.on('connection', (socket) => {
     });
 });
 
-// Subscribe to the Redis channel
-redisSubscriber.subscribe('trade_notifications', (err, count) => {
+redisSubscriber.subscribe('trade_notifications', 'public_market_ticks', (err, count) => {
     if (err) console.error("Failed to subscribe: %s", err.message);
-    else console.log(`Subscribed to ${count} channel(s).`);
 });
-// When a message arrives from the Worker...
+
 redisSubscriber.on('message', (channel, message) => {
-    console.log(`Received ${message} from ${channel}`);
     const data = JSON.parse(message);
-    
-    // Broadcast to all connected mechanisms (Frontend)
-    io.emit('orderbook_update', data); 
+    if (channel === 'trade_notifications') {
+        io.emit('orderbook_update', data); 
+    } 
+    else if (channel === 'public_market_ticks') {
+        io.emit('market_tick', data); 
+    }
 });
 
 server.listen(PORT, () => {

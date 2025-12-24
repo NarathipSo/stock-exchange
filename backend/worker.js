@@ -4,16 +4,16 @@ const db = require('./db');
 
 const STREAM_KEY = 'orders_stream';
 const GROUP_NAME = 'matching_group';
-const CONSUMER_NAME = 'matcher_1';
+const CONSUMER_NAME = process.argv[2] || 'matcher_1';
 
-console.log("Worker Service Started...");
+console.log(`Worker Service Started as ${CONSUMER_NAME}...`);
 
 async function processQueue() {
 
     // 1. Create Consumer Group (idempotent check)
     try {
         await redis.xgroup('CREATE', STREAM_KEY, GROUP_NAME, '$', 'MKSTREAM');
-        console.log("Matching Consumer Group Created");
+        // console.log("Matching Consumer Group Created");
     } catch (err) {
         if (!err.message.includes('BUSYGROUP')) console.error(err);
     }
@@ -48,13 +48,21 @@ async function processQueue() {
                     if (trades && trades.length > 0) {
                         for (const trade of trades) {
                             await redis.xadd('market_events', '*', 'data', JSON.stringify(trade));
-                            console.log(`Added trade for ${trade.symbol} to market_events stream`);
+                            // console.log(`Added trade for ${trade.symbol} to market_events stream`);
+
+                            await redis.publish('public_market_ticks', JSON.stringify({
+                                type: 'TRADE_TICK',
+                                symbol: trade.symbol,
+                                price: trade.price,
+                                quantity: trade.quantity,
+                                timestamp: new Date().getTime()
+                            }));
                         }
                     }
 
                     // ACK
                     await redis.xack(STREAM_KEY, GROUP_NAME, id);
-                    console.log(`Processed and Acked Order ${orderId} (Stream ID: ${id})`);
+                    // console.log(`Processed and Acked Order ${orderId} (Stream ID: ${id})`);
                 }
             }
 
@@ -100,7 +108,7 @@ async function updateOrderBookCache(symbol) {
         const responseData = { bids, offers, currentPrice };
 
         await redis.set(`orderbook:${symbol}`, JSON.stringify(responseData));
-        console.log(`[Worker] Cache updated for ${symbol}`);
+        // console.log(`[Worker] Cache updated for ${symbol}`);
     }
 
     catch (err) {

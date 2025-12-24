@@ -1,119 +1,154 @@
 const db = require('../db');
 
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 const matchOrder = async (orderId) => {
     let matched = false;
     let symbol = null;
     let trades = [];
-    const connection = await db.getConnection(); // Get one connection for the whole process
 
-    try {
-        await connection.beginTransaction();
+    let attempts = 0;
+    const MAX_RETRIES = 3;
 
-        // 1. Get the Incoming Order
-        // "FOR UPDATE" locks this row so no one else can touch it while we calculate
-        const [rows] = await connection.execute(
-            `SELECT * FROM order_book WHERE id = ? FOR UPDATE`,
-            [orderId]
-        );
+    while (attempts < MAX_RETRIES) {
+        const connection = await db.getConnection(); // Get one connection for the whole process
 
-        // If order vanished (rare race condition), stop
-        if (rows.length === 0) {
-            await connection.rollback();
-            return;
+        try {
+            await connection.beginTransaction();
+
+            // 1. Get the Incoming Order
+            // "FOR UPDATE" locks this row so no one else can touch it while we calculate
+            const [rows] = await connection.execute(
+                `SELECT * FROM order_book WHERE id = ? FOR UPDATE`,
+                [orderId]
+            );
+
+            // If order vanished (rare race condition), stop
+            if (rows.length === 0) {
+                await connection.rollback();
+                return;
+            }
+
+            const incomingOrder = rows[0];
+            symbol = incomingOrder.stock_symbol;
+            let remainingQty = parseFloat(incomingOrder.quantity); // Track memory state
+
+            // 2. Find Matchable Orders
+            let matchSql = '';
+            if (incomingOrder.order_type === 'BUY') {
+                matchSql = `SELECT * FROM order_book WHERE stock_symbol = ? AND order_type = 'SELL' AND price <= ? AND (status = 'OPEN' OR status = 'PARTIAL') ORDER BY price ASC, created_at ASC FOR UPDATE`;
+            } else {
+                matchSql = `SELECT * FROM order_book WHERE stock_symbol = ? AND order_type = 'BUY' AND price >= ? AND (status = 'OPEN' OR status = 'PARTIAL') ORDER BY price DESC, created_at ASC FOR UPDATE`;
+            }
+
+            const [matchableOrders] = await connection.execute(matchSql, [incomingOrder.stock_symbol, incomingOrder.price]);
+
+            // 3. The Matching Loop
+            for (const match of matchableOrders) {
+                if (remainingQty <= 0) break;
+
+                const currentMatchQty = parseFloat(match.quantity);
+                const delta = Math.min(remainingQty, currentMatchQty);
+
+                if (delta <= 0) continue;
+
+                const price = parseFloat(match.price);
+
+                // If the Incoming BUY order matched at a lower price (e.g. Bid 105, Match 100),
+                // refund the difference to the buyer.
+                if (incomingOrder.order_type === 'BUY') {
+                    const limitPrice = parseFloat(incomingOrder.price);
+                    const surplus = (limitPrice - price) * delta;
+                    
+                    if (surplus > 0) {
+                        await connection.execute(
+                            `UPDATE users SET balance_fiat = balance_fiat + ? WHERE id = ?`,
+                            [surplus, incomingOrder.user_id]
+                        );
+                        // console.log(`Refunded $${surplus} to Buyer ${incomingOrder.user_id}`);
+                    }
+                }
+
+                // --- A. CREATE TRADE RECORD ---
+                await connection.execute(
+                    `INSERT INTO trades (buyer_id, seller_id, stock_symbol, price, quantity) VALUES (?, ?, ?, ?, ?)`,
+                    [
+                        incomingOrder.order_type === 'BUY' ? incomingOrder.user_id : match.user_id,
+                        incomingOrder.order_type === 'BUY' ? match.user_id : incomingOrder.user_id,
+                        incomingOrder.stock_symbol,
+                        price,
+                        delta
+                    ]
+                );
+
+                // --- B. UPDATE MATCHED ORDER (MAKER) ---
+                const newMatchQty = currentMatchQty - delta;
+                const matchStatus = newMatchQty === 0 ? 'FILLED' : 'PARTIAL';
+
+                await connection.execute(
+                    `UPDATE order_book SET quantity = ?, status = ? WHERE id = ?`,
+                    [newMatchQty, matchStatus, match.id]
+                );
+
+                // --- C. UPDATE INCOMING ORDER (TAKER) ---
+                remainingQty -= delta;
+                const incomingStatus = remainingQty === 0 ? 'FILLED' : 'PARTIAL';
+
+                await connection.execute(
+                    `UPDATE order_book SET quantity = ?, status = ? WHERE id = ?`,
+                    [remainingQty, incomingStatus, incomingOrder.id]
+                );
+
+                // --- D. UPDATE BALANCES (The Money) ---
+                const buyerId = incomingOrder.order_type === 'BUY' ? incomingOrder.user_id : match.user_id;
+                const sellerId = incomingOrder.order_type === 'BUY' ? match.user_id : incomingOrder.user_id;
+                const totalValue = delta * price;
+
+                // Update Buyer
+                await connection.execute(
+                    `UPDATE users SET balance_stock_symbol = balance_stock_symbol + ? WHERE id = ?`,
+                    [delta, buyerId]
+                );
+
+                // Update Seller
+                await connection.execute(
+                    `UPDATE users SET balance_fiat = balance_fiat + ? WHERE id = ?`,
+                    [totalValue, sellerId]
+                );
+
+                trades.push({
+                    symbol: incomingOrder.stock_symbol,
+                    price: price,
+                    quantity: delta,
+                    timestamp: new Date()
+                });
+
+                // console.log(`Matched ${delta} shares @ ${price} ${incomingOrder.stock_symbol} Buyer: ${buyerId} Seller: ${sellerId}`);
+                matched = true;
+            }
+
+            await connection.commit(); // SAVE EVERYTHING
+            return { matched, symbol, trades };
+
+        } catch (error) {
+            await connection.rollback(); // UNDO EVERYTHING if error
+
+            if (error.errno === 1213) {
+                    attempts++;
+                    console.log(`Deadlock detected. Retrying attempt ${attempts}...`);
+                    await sleep(50); // Pause 50ms before retrying
+                    continue;        // Restart the loop
+                }
+
+            console.error("Matching Engine Error:", error);
+            break; // Exit loop on non-deadlock error
+        } finally {
+            connection.release(); // Close connection
         }
-
-        const incomingOrder = rows[0];
-        symbol = incomingOrder.stock_symbol;
-        let remainingQty = parseFloat(incomingOrder.quantity); // Track memory state
-
-        // 2. Find Matchable Orders
-        let matchSql = '';
-        if (incomingOrder.order_type === 'BUY') {
-            matchSql = `SELECT * FROM order_book WHERE stock_symbol = ? AND order_type = 'SELL' AND price <= ? AND (status = 'OPEN' OR status = 'PARTIAL') ORDER BY price ASC, created_at ASC FOR UPDATE`;
-        } else {
-            matchSql = `SELECT * FROM order_book WHERE stock_symbol = ? AND order_type = 'BUY' AND price >= ? AND (status = 'OPEN' OR status = 'PARTIAL') ORDER BY price DESC, created_at ASC FOR UPDATE`;
-        }
-
-        const [matchableOrders] = await connection.execute(matchSql, [incomingOrder.stock_symbol, incomingOrder.price]);
-
-        // 3. The Matching Loop
-        for (const match of matchableOrders) {
-            if (remainingQty <= 0) break;
-
-            const currentMatchQty = parseFloat(match.quantity);
-            const delta = Math.min(remainingQty, currentMatchQty);
-
-            if (delta <= 0) continue;
-
-            const price = parseFloat(match.price);
-
-            // --- A. CREATE TRADE RECORD ---
-            await connection.execute(
-                `INSERT INTO trades (buyer_id, seller_id, stock_symbol, price, quantity) VALUES (?, ?, ?, ?, ?)`,
-                [
-                    incomingOrder.order_type === 'BUY' ? incomingOrder.user_id : match.user_id,
-                    incomingOrder.order_type === 'BUY' ? match.user_id : incomingOrder.user_id,
-                    incomingOrder.stock_symbol,
-                    price,
-                    delta
-                ]
-            );
-
-            // --- B. UPDATE MATCHED ORDER (MAKER) ---
-            const newMatchQty = currentMatchQty - delta;
-            const matchStatus = newMatchQty === 0 ? 'FILLED' : 'PARTIAL';
-
-            await connection.execute(
-                `UPDATE order_book SET quantity = ?, status = ? WHERE id = ?`,
-                [newMatchQty, matchStatus, match.id]
-            );
-
-            // --- C. UPDATE INCOMING ORDER (TAKER) ---
-            remainingQty -= delta;
-            const incomingStatus = remainingQty === 0 ? 'FILLED' : 'PARTIAL';
-
-            await connection.execute(
-                `UPDATE order_book SET quantity = ?, status = ? WHERE id = ?`,
-                [remainingQty, incomingStatus, incomingOrder.id]
-            );
-
-            // --- D. UPDATE BALANCES (The Money) ---
-            const buyerId = incomingOrder.order_type === 'BUY' ? incomingOrder.user_id : match.user_id;
-            const sellerId = incomingOrder.order_type === 'BUY' ? match.user_id : incomingOrder.user_id;
-            const totalValue = delta * price;
-
-            // Update Buyer
-            await connection.execute(
-                `UPDATE users SET balance_stock_symbol = balance_stock_symbol + ? WHERE id = ?`,
-                [delta, buyerId]
-            );
-
-            // Update Seller
-            await connection.execute(
-                `UPDATE users SET balance_fiat = balance_fiat + ? WHERE id = ?`,
-                [totalValue, sellerId]
-            );
-
-            trades.push({
-                symbol: incomingOrder.stock_symbol,
-                price: price,
-                quantity: delta,
-                timestamp: new Date()
-            });
-
-            console.log(`Matched ${delta} shares @ ${price} ${incomingOrder.stock_symbol} Buyer: ${buyerId} Seller: ${sellerId}`);
-            matched = true;
-        }
-
-        await connection.commit(); // SAVE EVERYTHING
-
-    } catch (error) {
-        await connection.rollback(); // UNDO EVERYTHING if error
-        console.error("Matching Engine Error:", error);
-    } finally {
-        connection.release(); // Close connection
-        return { matched, symbol, trades };
     }
+
+    console.log("Fail deadlock");
+    return { matched, symbol, trades };
 };
 
 module.exports = matchOrder;

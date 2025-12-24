@@ -12,7 +12,10 @@ const StockInfo = () => {
       const res = await fetch(`${import.meta.env.VITE_API_URL}/api/orderbook/GOOGL`);
       const data = await res.json();
 
-      setOrderBook(data);
+      if (data) {
+        setOrderBook(data);
+      }
+
     } catch (error) {
       console.error("Failed to fetch order book", error);
     }
@@ -35,7 +38,7 @@ const StockInfo = () => {
 
   return (
     <div className="container">
-      <h1 className="stock"><span>{orderBook.currentPrice[0].price}</span> &nbsp; GOOGL</h1>
+      <h1 className="stock"><span>{orderBook.currentPrice?.[0]?.price ?? 0}</span> &nbsp; GOOGL</h1>
 
       <div className="market-container">
         <div className="market-window">

@@ -50,7 +50,7 @@ exports.getOrderBook = async (req, res) => {
         // 'ex' means expire, 3 is seconds.
 
         await redis.set(cacheKey, JSON.stringify(responseData));
-        console.log(`Cache Set for ${symbol}`);
+        // console.log(`Cache Set for ${symbol}`);
         
         res.json(responseData);
     } catch (error) {
