@@ -9,7 +9,7 @@ async function setup() {
         // Create consumer group
         // '$' means start reading only NEW messages. Use '0' to read all history.
         await redis.xgroup('CREATE', STREAM_KEY, GROUP_NAME, '$', 'MKSTREAM');
-        // console.log("Aggregator Consumer Group created");
+        console.log("Aggregator Consumer Group created");
     } catch (err) {
         if (!err.message.includes('BUSYGROUP')) throw err;
     }

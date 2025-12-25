@@ -25,9 +25,11 @@ const StockInfo = () => {
     fetchOrderBook();
 
     // Listen for "orderbook_update" event from Server
-    socket.on('orderbook_update', () => {
+    socket.on('orderbook_update', (data) => {
         console.log("Real-time update received!");
-        fetchOrderBook();
+        if (data && data.bids && data.offers) {
+            setOrderBook(data);
+        }
     });
 
     // Cleanup listener on unmount

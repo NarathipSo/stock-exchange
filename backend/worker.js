@@ -8,12 +8,49 @@ const CONSUMER_NAME = process.argv[2] || 'matcher_1';
 
 console.log(`Worker Service Started as ${CONSUMER_NAME}...`);
 
+// helper function 
+const fieldsToObject = (fields) => {
+    const obj = {};
+    for (let i = 0; i < fields.length; i += 2) {
+        obj[fields[i]] = fields[i + 1];
+    }
+    return obj;
+};
+
+async function getOrderBookSnapshot(symbol) {
+    const buyIds = await redis.zrange(`orderbook:${symbol}:bids`, 0, 9); 
+    const askIds = await redis.zrange(`orderbook:${symbol}:asks`, 0, 9);
+    const lastPrice = await redis.get(`last_price:${symbol}`) || 0;
+
+    const buildAndAggregate = async (ids, isBuy) => {
+        const priceMap = new Map();
+        for (const id of ids) {
+            const data = await redis.hgetall(`order:${id}`);
+            if (data.price) {
+                const p = parseFloat(data.price);
+                const q = parseFloat(data.quantity);
+                if (priceMap.has(p)) priceMap.set(p, priceMap.get(p) + q);
+                else priceMap.set(p, q);
+            }
+        }
+        const result = [];
+        priceMap.forEach((qty, price) => result.push({ price, quantity: qty }));
+        return result.sort((a, b) => isBuy ? b.price - a.price : a.price - b.price).slice(0, 10);
+    };
+
+    return {
+        bids: await buildAndAggregate(buyIds, true),
+        offers: await buildAndAggregate(askIds, false),
+        currentPrice: [{ price: parseFloat(lastPrice) }]
+    };
+}
+
 async function processQueue() {
 
     // 1. Create Consumer Group (idempotent check)
     try {
         await redis.xgroup('CREATE', STREAM_KEY, GROUP_NAME, '$', 'MKSTREAM');
-        // console.log("Matching Consumer Group Created");
+        console.log("Matching Consumer Group Created");
     } catch (err) {
         if (!err.message.includes('BUSYGROUP')) console.error(err);
     }
@@ -30,23 +67,22 @@ async function processQueue() {
                 const [stream, messages] = response[0];
                 for (const message of messages) {
                     const id = message[0];
-                    const orderId = JSON.parse(message[1][1]); // value is at index 1
+
+                    const rawData = fieldsToObject(message[1]);
+                    const orderData = JSON.parse(rawData.data);
 
                     // Run the CPU-heavy matching logic
-                    const { matched, symbol, trades } = await matchOrder(orderId);
+                    const { matched, symbol, trades } = await matchOrder(orderData);
 
                     if (symbol) {
-                        await updateOrderBookCache(symbol);
+                        const snapshot = await getOrderBookSnapshot(symbol);
+                        await redis.publish('trade_notifications', JSON.stringify(snapshot));
                     }
-
-                    await redis.publish('trade_notifications', JSON.stringify({ 
-                        message: matched ? `Order ${orderId} matched` : `Order ${orderId} added`,
-                        orderId: orderId,
-                        symbol: symbol
-                    }));
 
                     if (trades && trades.length > 0) {
                         for (const trade of trades) {
+                            await redis.xadd('trades_persistence', '*', 'data', JSON.stringify(trade));
+
                             await redis.xadd('market_events', '*', 'data', JSON.stringify(trade));
                             // console.log(`Added trade for ${trade.symbol} to market_events stream`);
 
@@ -62,7 +98,7 @@ async function processQueue() {
 
                     // ACK
                     await redis.xack(STREAM_KEY, GROUP_NAME, id);
-                    // console.log(`Processed and Acked Order ${orderId} (Stream ID: ${id})`);
+                    // console.log(`Processed & Acked Order ${orderData.id} (Stream ID: ${id})`);
                 }
             }
 
@@ -107,7 +143,7 @@ async function updateOrderBookCache(symbol) {
 
         const responseData = { bids, offers, currentPrice };
 
-        await redis.set(`orderbook:${symbol}`, JSON.stringify(responseData));
+        // await redis.set(`orderbook:${symbol}`, JSON.stringify(responseData));
         // console.log(`[Worker] Cache updated for ${symbol}`);
     }
 

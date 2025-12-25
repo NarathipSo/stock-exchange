@@ -1,100 +1,65 @@
 const db = require('../db');
-const queue = require('../queue');
-
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+const redis = require('../queue');
 
 exports.placeOrder = async (req, res) => {
     const { user_id, stock_symbol, order_type, price, quantity } = req.body;
 
     if (!user_id || !stock_symbol || !price || !quantity || !order_type) {
-        return res.status(400).json({ error: 'Missing required fields' });
+        return res.status(400).json({ error: 'Missing fields' });
     }
-
     if (parseFloat(price) <= 0 || parseFloat(quantity) <= 0) {
-        return res.status(400).json({ error: 'Price and quantity must be positive' });
+        return res.status(400).json({ error: 'Positive numbers only' });
     }
 
-    let attempts = 0;
-    const MAX_RETRIES = 20;
+    const connection = await db.getConnection();
+    try {
+        await connection.beginTransaction();
 
-    while (attempts < MAX_RETRIES) {
-        // connection from the pool
-        const connection = await db.getConnection();
+        // 1. Lock User & Check Balance (Keep SQL for safety)
+        const [users] = await connection.execute('SELECT * FROM users WHERE id = ? FOR UPDATE', [user_id]);
+        if (users.length === 0) throw new Error('User not found');
+        const user = users[0];
+        const totalValue = price * quantity;
 
-        try {
-            await connection.beginTransaction();
-
-            const [users] = await connection.execute(
-                `SELECT * FROM users WHERE id = ? FOR UPDATE`,
-                [user_id]
-            );
-
-            if (users.length === 0) {
-                throw new Error('User not found');
-            }
-
-            const user = users[0];
-            const totalValue = price * quantity;
-
-            if (order_type === 'BUY') {
-                if (parseFloat(user.balance_fiat) < totalValue) {
-                    throw new Error('Insufficient funds');
-                }
-                // DEDUCT CASH NOW
-                await connection.execute(
-                    `UPDATE users SET balance_fiat = balance_fiat - ? WHERE id = ?`,
-                    [totalValue, user_id]
-                );
-            } else if (order_type === 'SELL') {
-                if (parseFloat(user.balance_stock_symbol) < quantity) {
-                    throw new Error('Insufficient stock');
-                }
-                // DEDUCT STOCK NOW
-                await connection.execute(
-                    `UPDATE users SET balance_stock_symbol = balance_stock_symbol - ? WHERE id = ?`,
-                    [quantity, user_id]
-                );
-            }
-
-            // 4. Insert the Order into the Order Book
-            const [result] = await connection.execute(
-                `INSERT INTO order_book (user_id, stock_symbol, order_type, price, quantity) 
-                VALUES (?, ?, ?, ?, ?)`,
-                [user_id, stock_symbol, order_type, price, quantity]
-            );
-
-            // 5. Commit the transaction (Save changes)
-            await connection.commit();
-
-            // Add to stream 'orders_stream' with auto-ID ('*'). Field 'orderId' = value
-            await queue.xadd('orders_stream', '*', 'orderId', JSON.stringify(result.insertId));
-            // console.log(`Order ${result.insertId} added to orders_stream`);
-
-            return res.status(201).json({
-                message: 'Order placed successfully',
-                orderId: result.insertId
-            });
-
-        } catch (error) {
-            // If anything goes wrong, roll back changes
-            await connection.rollback();
-
-             if (error.errno === 1213) {
-                attempts++;
-                // Exponential backoff + Jitter to reduce collisions
-                const backoff = (attempts * 20) + Math.floor(Math.random() * 50);
-                await sleep(backoff); 
-                continue;        // Restart the loop
-            }
-
-            console.error(error);
-            return res.status(500).json({ error: 'Database error' });
-        } finally {
-            // Always release the connection back to the pool
-            connection.release();
+        if (order_type === 'BUY') {
+            if (parseFloat(user.balance_fiat) < totalValue) throw new Error('Insufficient funds');
+            await connection.execute('UPDATE users SET balance_fiat = balance_fiat - ? WHERE id = ?', [totalValue, user_id]);
+        } else {
+            if (parseFloat(user.balance_stock_symbol) < quantity) throw new Error('Insufficient stock');
+            await connection.execute('UPDATE users SET balance_stock_symbol = balance_stock_symbol - ? WHERE id = ?', [quantity, user_id]);
         }
-    }
 
-    console.log("Fail deadlock");
-    return res.status(503).json({ error: 'Server busy, please try again (Deadlock)' });
+        await connection.commit();
+
+        const rawId = await redis.incr('global_order_id');
+        // PAD ID: "1" -> "000000000001" (Ensures String Sort == Integer Sort)
+        const orderId = rawId.toString().padStart(12, '0');
+
+        // 3. Create Order Object
+        const orderData = {
+            id: orderId,
+            user_id,
+            stock_symbol,
+            order_type,
+            price: parseFloat(price),
+            quantity: parseFloat(quantity),
+            timestamp: Date.now()
+        };
+
+        // 4. Save Order Details to Redis Hash (for lookup)
+        await redis.hset(`order:${orderId}`, orderData);
+
+        // 5. Push to Matching Engine
+        await redis.xadd('orders_stream', '*', 'data', JSON.stringify(orderData));
+
+        res.status(201).json({ message: 'Order Queued', orderId });
+        console.log(`Order ${orderId} added to orders_stream`);
+
+    } catch (error) {
+        await connection.rollback();
+        console.error(error);
+        res.status(500).json({ error: error.message });
+    } finally {
+        connection.release();
+    }
 };

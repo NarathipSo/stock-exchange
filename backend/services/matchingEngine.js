@@ -1,154 +1,86 @@
-const db = require('../db');
+const redis = require('../queue');
 
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
-const matchOrder = async (orderId) => {
-    let matched = false;
-    let symbol = null;
+const matchOrder = async (order) => {
+    const { id, user_id, stock_symbol, order_type, price, quantity } = order;
+    let remainingQty = parseFloat(quantity);
     let trades = [];
+    let matched = false;
+    
+    // ZSETS: Bids = High Score, Asks = Low Score
+    const isBuy = order_type === 'BUY';
+    const oppositeBookKey = `orderbook:${stock_symbol}:${isBuy ? 'asks' : 'bids'}`;
+    const myBookKey = `orderbook:${stock_symbol}:${isBuy ? 'bids' : 'asks'}`;
+    
+    try {
+        // Loop until filled or no match
+        while (remainingQty > 0) {
+            // Get Best Price from Opposite Book
+            const bestOrders = await redis.zrange(oppositeBookKey, 0, 0);
 
-    let attempts = 0;
-    const MAX_RETRIES = 3;
+            if (bestOrders.length === 0) break; // No counter orders
 
-    while (attempts < MAX_RETRIES) {
-        const connection = await db.getConnection(); // Get one connection for the whole process
-
-        try {
-            await connection.beginTransaction();
-
-            // 1. Get the Incoming Order
-            // "FOR UPDATE" locks this row so no one else can touch it while we calculate
-            const [rows] = await connection.execute(
-                `SELECT * FROM order_book WHERE id = ? FOR UPDATE`,
-                [orderId]
-            );
-
-            // If order vanished (rare race condition), stop
-            if (rows.length === 0) {
-                await connection.rollback();
-                return;
+            const bestOrderId = bestOrders[0];
+            const bestOrderData = await redis.hgetall(`order:${bestOrderId}`);
+            
+            if (!bestOrderData || !bestOrderData.price) {
+                await redis.zrem(oppositeBookKey, bestOrderId); // Cleanup bad data
+                continue;
             }
 
-            const incomingOrder = rows[0];
-            symbol = incomingOrder.stock_symbol;
-            let remainingQty = parseFloat(incomingOrder.quantity); // Track memory state
+            const bestPrice = parseFloat(bestOrderData.price);
+            const bestQty = parseFloat(bestOrderData.quantity);
 
-            // 2. Find Matchable Orders
-            let matchSql = '';
-            if (incomingOrder.order_type === 'BUY') {
-                matchSql = `SELECT * FROM order_book WHERE stock_symbol = ? AND order_type = 'SELL' AND price <= ? AND (status = 'OPEN' OR status = 'PARTIAL') ORDER BY price ASC, created_at ASC FOR UPDATE`;
+            // Price Check
+            if (isBuy && bestPrice > price) break; // Too expensive
+            if (!isBuy && bestPrice < price) break; // Too cheap
+
+            // Execute Match
+            const tradeQty = Math.min(remainingQty, bestQty);
+            
+            // Update Amounts
+            remainingQty -= tradeQty;
+            const remainingBestQty = bestQty - tradeQty;
+
+            // Persist Trade Request (Async)
+            const tradeEvent = {
+                buyer_id: isBuy ? user_id : bestOrderData.user_id,
+                seller_id: isBuy ? bestOrderData.user_id : user_id,
+                symbol: stock_symbol,
+                price: bestPrice,
+                quantity: tradeQty,
+                buyer_refund: isBuy ? (price - bestPrice) * tradeQty : 0,
+                timestamp: Date.now()
+            };
+
+            await redis.set(`last_price:${stock_symbol}`, bestPrice);
+            trades.push(tradeEvent);
+            matched = true;
+
+            // Update Opposite Order
+            if (remainingBestQty > 0) {
+                await redis.hset(`order:${bestOrderId}`, 'quantity', remainingBestQty);
+                // No need to update ZScore
             } else {
-                matchSql = `SELECT * FROM order_book WHERE stock_symbol = ? AND order_type = 'BUY' AND price >= ? AND (status = 'OPEN' OR status = 'PARTIAL') ORDER BY price DESC, created_at ASC FOR UPDATE`;
+                await redis.del(`order:${bestOrderId}`);
+                await redis.zrem(oppositeBookKey, bestOrderId);
             }
-
-            const [matchableOrders] = await connection.execute(matchSql, [incomingOrder.stock_symbol, incomingOrder.price]);
-
-            // 3. The Matching Loop
-            for (const match of matchableOrders) {
-                if (remainingQty <= 0) break;
-
-                const currentMatchQty = parseFloat(match.quantity);
-                const delta = Math.min(remainingQty, currentMatchQty);
-
-                if (delta <= 0) continue;
-
-                const price = parseFloat(match.price);
-
-                // If the Incoming BUY order matched at a lower price (e.g. Bid 105, Match 100),
-                // refund the difference to the buyer.
-                if (incomingOrder.order_type === 'BUY') {
-                    const limitPrice = parseFloat(incomingOrder.price);
-                    const surplus = (limitPrice - price) * delta;
-                    
-                    if (surplus > 0) {
-                        await connection.execute(
-                            `UPDATE users SET balance_fiat = balance_fiat + ? WHERE id = ?`,
-                            [surplus, incomingOrder.user_id]
-                        );
-                        // console.log(`Refunded $${surplus} to Buyer ${incomingOrder.user_id}`);
-                    }
-                }
-
-                // --- A. CREATE TRADE RECORD ---
-                await connection.execute(
-                    `INSERT INTO trades (buyer_id, seller_id, stock_symbol, price, quantity) VALUES (?, ?, ?, ?, ?)`,
-                    [
-                        incomingOrder.order_type === 'BUY' ? incomingOrder.user_id : match.user_id,
-                        incomingOrder.order_type === 'BUY' ? match.user_id : incomingOrder.user_id,
-                        incomingOrder.stock_symbol,
-                        price,
-                        delta
-                    ]
-                );
-
-                // --- B. UPDATE MATCHED ORDER (MAKER) ---
-                const newMatchQty = currentMatchQty - delta;
-                const matchStatus = newMatchQty === 0 ? 'FILLED' : 'PARTIAL';
-
-                await connection.execute(
-                    `UPDATE order_book SET quantity = ?, status = ? WHERE id = ?`,
-                    [newMatchQty, matchStatus, match.id]
-                );
-
-                // --- C. UPDATE INCOMING ORDER (TAKER) ---
-                remainingQty -= delta;
-                const incomingStatus = remainingQty === 0 ? 'FILLED' : 'PARTIAL';
-
-                await connection.execute(
-                    `UPDATE order_book SET quantity = ?, status = ? WHERE id = ?`,
-                    [remainingQty, incomingStatus, incomingOrder.id]
-                );
-
-                // --- D. UPDATE BALANCES (The Money) ---
-                const buyerId = incomingOrder.order_type === 'BUY' ? incomingOrder.user_id : match.user_id;
-                const sellerId = incomingOrder.order_type === 'BUY' ? match.user_id : incomingOrder.user_id;
-                const totalValue = delta * price;
-
-                // Update Buyer
-                await connection.execute(
-                    `UPDATE users SET balance_stock_symbol = balance_stock_symbol + ? WHERE id = ?`,
-                    [delta, buyerId]
-                );
-
-                // Update Seller
-                await connection.execute(
-                    `UPDATE users SET balance_fiat = balance_fiat + ? WHERE id = ?`,
-                    [totalValue, sellerId]
-                );
-
-                trades.push({
-                    symbol: incomingOrder.stock_symbol,
-                    price: price,
-                    quantity: delta,
-                    timestamp: new Date()
-                });
-
-                // console.log(`Matched ${delta} shares @ ${price} ${incomingOrder.stock_symbol} Buyer: ${buyerId} Seller: ${sellerId}`);
-                matched = true;
-            }
-
-            await connection.commit(); // SAVE EVERYTHING
-            return { matched, symbol, trades };
-
-        } catch (error) {
-            await connection.rollback(); // UNDO EVERYTHING if error
-
-            if (error.errno === 1213) {
-                    attempts++;
-                    console.log(`Deadlock detected. Retrying attempt ${attempts}...`);
-                    await sleep(50); // Pause 50ms before retrying
-                    continue;        // Restart the loop
-                }
-
-            console.error("Matching Engine Error:", error);
-            break; // Exit loop on non-deadlock error
-        } finally {
-            connection.release(); // Close connection
         }
+
+        // Add Remaining to Book
+        if (remainingQty > 0) {
+            await redis.hset(`order:${id}`, 'quantity', remainingQty);
+
+            // Buy = -Price (so ZRANGE gives Highest Price first)
+            // Sell = +Price (so ZRANGE gives Lowest Price first)
+            const score = isBuy ? -price : price;
+            
+            await redis.zadd(myBookKey, score, id);
+        }
+    } catch (error) {
+        console.error("Matching Error:", error);
     }
 
-    console.log("Fail deadlock");
-    return { matched, symbol, trades };
+    return { matched, symbol: stock_symbol, trades };
 };
 
 module.exports = matchOrder;

@@ -38,7 +38,6 @@ async function runBenchmark() {
         if (channel === 'trade_notifications') {
             processedCount++;
             if (processedCount % 100 === 0) process.stdout.write('.');
-            if (processedCount === 999) process.stdout.write('999');
         }
     });
 
