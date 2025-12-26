@@ -53,7 +53,7 @@ exports.placeOrder = async (req, res) => {
         await redis.xadd('orders_stream', '*', 'data', JSON.stringify(orderData));
 
         res.status(201).json({ message: 'Order Queued', orderId });
-        console.log(`Order ${orderId} added to orders_stream`);
+        // console.log(`Order ${orderId} added to orders_stream`);
 
     } catch (error) {
         await connection.rollback();

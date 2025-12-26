@@ -23,16 +23,23 @@ async function getOrderBookSnapshot(symbol) {
     const lastPrice = await redis.get(`last_price:${symbol}`) || 0;
 
     const buildAndAggregate = async (ids, isBuy) => {
-        const priceMap = new Map();
+        const pipeline = redis.pipeline();
         for (const id of ids) {
-            const data = await redis.hgetall(`order:${id}`);
-            if (data.price) {
+            pipeline.hgetall(`order:${id}`);
+        }
+        
+        const results = await pipeline.exec(); // [[err, result], [err, result]]
+        
+        const priceMap = new Map();
+        for (const [err, data] of results) {
+            if (data && data.price) {
                 const p = parseFloat(data.price);
                 const q = parseFloat(data.quantity);
                 if (priceMap.has(p)) priceMap.set(p, priceMap.get(p) + q);
                 else priceMap.set(p, q);
             }
         }
+        
         const result = [];
         priceMap.forEach((qty, price) => result.push({ price, quantity: qty }));
         return result.sort((a, b) => isBuy ? b.price - a.price : a.price - b.price).slice(0, 10);
@@ -72,34 +79,38 @@ async function processQueue() {
                     const orderData = JSON.parse(rawData.data);
 
                     // Run the CPU-heavy matching logic
+                    // Run the CPU-heavy matching logic
                     const { matched, symbol, trades } = await matchOrder(orderData);
+
+                    // PIPELINE SIDE EFFECTS (Reduce RTT)
+                    const pipeline = redis.pipeline();
 
                     if (symbol) {
                         const snapshot = await getOrderBookSnapshot(symbol);
-                        await redis.publish('trade_notifications', JSON.stringify(snapshot));
+                        pipeline.publish('trade_notifications', JSON.stringify(snapshot));
                     }
 
                     if (trades && trades.length > 0) {
                         for (const trade of trades) {
-                            await redis.xadd('trades_persistence', '*', 'data', JSON.stringify(trade));
-
-                            await redis.xadd('market_events', '*', 'data', JSON.stringify(trade));
-                            // console.log(`Added trade for ${trade.symbol} to market_events stream`);
-
-                            await redis.publish('public_market_ticks', JSON.stringify({
+                            pipeline.xadd('trades_persistence', '*', 'data', JSON.stringify(trade));
+                            pipeline.xadd('market_events', '*', 'data', JSON.stringify(trade));
+                            
+                            pipeline.publish('public_market_ticks', JSON.stringify({
                                 type: 'TRADE_TICK',
                                 symbol: trade.symbol,
                                 price: trade.price,
                                 quantity: trade.quantity,
-                                timestamp: new Date().getTime()
+                                timestamp: Date.now()
                             }));
                         }
                     }
 
                     // ACK
-                    await redis.xack(STREAM_KEY, GROUP_NAME, id);
-                    // console.log(`Processed & Acked Order ${orderData.id} (Stream ID: ${id})`);
-                }
+                    pipeline.xack(STREAM_KEY, GROUP_NAME, id);
+                    
+                    // Execute all writes in ONE Round Trip
+                    await pipeline.exec();
+               }
             }
 
         } catch (error) {

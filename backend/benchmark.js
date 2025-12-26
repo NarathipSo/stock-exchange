@@ -1,10 +1,11 @@
 const axios = require('axios');
+const http = require('http'); // HTTP Agent for Keep-Alive
 const db = require('./db');
 const redis = require('./queue');
 
 const API_URL = 'http://localhost:3001/api/orders';
-const TOTAL_ORDERS = 1000; // How many orders to blast
-const CONCURRENCY = 50;    // How many requests at once (Batches)
+const TOTAL_ORDERS = 1000; // Increased Load
+const CONCURRENCY = 50;    // Increased Concurrency
 
 // Helper: Sleep
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -24,6 +25,9 @@ async function setupUser() {
 
 async function runBenchmark() {
     await setupUser();
+    
+    // Create Agent
+    const httpAgent = new http.Agent({ keepAlive: true });
 
     // 1. Connect a Listener
     const subscriber = redis.duplicate();
@@ -70,7 +74,7 @@ async function runBenchmark() {
                         order_type: type,
                         price: price.toFixed(2),
                         quantity: 1
-                    }).catch(e => { /* Ignore errors */ })
+                    }, { httpAgent }).catch(e => { /* Ignore errors */ }) // Use Agent
                 );
                 sentCount++;
             }
@@ -86,10 +90,6 @@ async function runBenchmark() {
     // We poll until we get 1000 confirmations or timeout
     while (processedCount < TOTAL_ORDERS) {
         await sleep(100);
-
-        if (processedCount > 900) {
-            console.log(processedCount);
-        }
 
         // Timeout protection
         if (Date.now() - startTime > 60000) {
