@@ -61,8 +61,8 @@ async function runBenchmark() {
                 const userId = (i % 50) + 1; 
                 
                 // Distribute load across 5 Symbols to allow parallel processing
-                // const symbols = ['GOOGL', 'AAPL', 'MSFT', 'TSLA', 'AMZN'];
-                // const symbol = symbols[Math.floor(Math.random() * symbols.length)];
+                const symbols = ['GOOGL', 'AAPL', 'MSFT', 'TSLA', 'AMZN'];
+                const symbol = symbols[Math.floor(Math.random() * symbols.length)];
 
                 const type = sentCount % 2 === 0 ? 'BUY' : 'SELL';
                 const price = 100 + (Math.random() * 5); 
@@ -70,7 +70,7 @@ async function runBenchmark() {
                 batch.push(
                     axios.post(API_URL, {
                         user_id: userId, 
-                        stock_symbol: 'GOOGL', // <--- Random Symbol
+                        stock_symbol: symbol, // <--- Random Symbol
                         order_type: type,
                         price: price.toFixed(2),
                         quantity: 1

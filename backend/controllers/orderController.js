@@ -10,7 +10,7 @@ exports.placeOrder = async (req, res) => {
     if (parseFloat(price) <= 0 || parseFloat(quantity) <= 0) {
         return res.status(400).json({ error: 'Positive numbers only' });
     }
-
+    
     const connection = await db.getConnection();
     try {
         await connection.beginTransaction();
@@ -30,7 +30,6 @@ exports.placeOrder = async (req, res) => {
         }
 
         await connection.commit();
-
         const rawId = await redis.incr('global_order_id');
         // PAD ID: "1" -> "000000000001" (Ensures String Sort == Integer Sort)
         const orderId = rawId.toString().padStart(12, '0');

@@ -72,45 +72,62 @@ async function processQueue() {
             );
             if (response) {
                 const [stream, messages] = response[0];
+                const tasksBySymbol = {};
+
+                // 1. Group by Symbol (Sharding)
                 for (const message of messages) {
                     const id = message[0];
-
                     const rawData = fieldsToObject(message[1]);
                     const orderData = JSON.parse(rawData.data);
+                    const symbol = orderData.stock_symbol;
 
-                    // Run the CPU-heavy matching logic
-                    // Run the CPU-heavy matching logic
-                    const { matched, symbol, trades } = await matchOrder(orderData);
+                    if (!tasksBySymbol[symbol]) tasksBySymbol[symbol] = [];
+                    tasksBySymbol[symbol].push({ id, orderData });
+                }
 
-                    // PIPELINE SIDE EFFECTS (Reduce RTT)
-                    const pipeline = redis.pipeline();
-
-                    if (symbol) {
-                        const snapshot = await getOrderBookSnapshot(symbol);
-                        pipeline.publish('trade_notifications', JSON.stringify(snapshot));
-                    }
-
-                    if (trades && trades.length > 0) {
-                        for (const trade of trades) {
-                            pipeline.xadd('trades_persistence', '*', 'data', JSON.stringify(trade));
-                            pipeline.xadd('market_events', '*', 'data', JSON.stringify(trade));
-                            
-                            pipeline.publish('public_market_ticks', JSON.stringify({
-                                type: 'TRADE_TICK',
-                                symbol: trade.symbol,
-                                price: trade.price,
-                                quantity: trade.quantity,
-                                timestamp: Date.now()
-                            }));
-                        }
-                    }
-
-                    // ACK
-                    pipeline.xack(STREAM_KEY, GROUP_NAME, id);
+                // 2. Process Symbols in Parallel
+                const processingPromises = Object.keys(tasksBySymbol).map(async (symbol) => {
+                    const tasks = tasksBySymbol[symbol];
                     
-                    // Execute all writes in ONE Round Trip
-                    await pipeline.exec();
-               }
+                    // Process SEQUENTIALLY per symbol (to maintain strict price-time priority)
+                    for (const task of tasks) {
+                        const { id, orderData } = task;
+
+                        // Run the CPU-heavy matching logic
+                        const { matched, symbol, trades } = await matchOrder(orderData);
+
+                        // PIPELINE SIDE EFFECTS (Reduce RTT)
+                        const pipeline = redis.pipeline();
+
+                        if (symbol) {
+                            const snapshot = await getOrderBookSnapshot(symbol);
+                            pipeline.publish('trade_notifications', JSON.stringify(snapshot));
+                        }
+
+                        if (trades && trades.length > 0) {
+                            for (const trade of trades) {
+                                pipeline.xadd('trades_persistence', '*', 'data', JSON.stringify(trade));
+                                pipeline.xadd('market_events', '*', 'data', JSON.stringify(trade));
+                                
+                                pipeline.publish('public_market_ticks', JSON.stringify({
+                                    type: 'TRADE_TICK',
+                                    symbol: trade.symbol,
+                                    price: trade.price,
+                                    quantity: trade.quantity,
+                                    timestamp: Date.now()
+                                }));
+                            }
+                        }
+
+                        // ACK
+                        pipeline.xack(STREAM_KEY, GROUP_NAME, id);
+                        
+                        // Execute all writes in ONE Round Trip
+                        await pipeline.exec();
+                    }
+                });
+
+                await Promise.all(processingPromises);
             }
 
         } catch (error) {
