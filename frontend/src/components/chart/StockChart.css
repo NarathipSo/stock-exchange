@@ -2,12 +2,16 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    margin: 20px 0;
     width: 100%;
+    background: #131316;
+}
+
+.chart-container h2 {
+    margin: 40px 0;
+    color: #ffffff;
 }
 
 .chart-window {
     width: 90%;
-    border: 1px solid #ccc;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    box-shadow: 0 6px 10px rgba(0,0,0,0.5);
 }

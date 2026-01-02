@@ -1,9 +1,8 @@
 import { useState } from 'react'
 import './Order.css'
 
-const Order = () => {
+const Order = ({ symbol }) => {
     const [userId, setUserId] = useState();
-    const [stock_symbol, setStockSymbol] = useState();
     const [type, setType] = useState("BUY");
     const [price, setPrice] = useState();
     const [qty, setQty] = useState();
@@ -15,7 +14,7 @@ const Order = () => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
             user_id: userId,
-            stock_symbol: 'GOOGL',
+            stock_symbol: symbol,
             order_type: type,
             price: parseFloat(price),
             quantity: parseFloat(qty)
@@ -29,7 +28,6 @@ const Order = () => {
         }
 
         setUserId('');
-        setStockSymbol('');
         setType('BUY');
         setPrice('');
         setQty('');

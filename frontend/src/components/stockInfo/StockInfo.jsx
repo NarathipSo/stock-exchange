@@ -4,12 +4,12 @@ import io from 'socket.io-client';
 
 const socket = io(import.meta.env.VITE_API_URL);
 
-const StockInfo = () => {
+const StockInfo = ({ symbol }) => {
   const [orderBook, setOrderBook] = useState({ bids: [], offers: [], currentPrice: [{price: 0}] });
 
   const fetchOrderBook = async () => {
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/orderbook/GOOGL`);
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/orderbook/${symbol}`);
       const data = await res.json();
 
       if (data) {
@@ -23,24 +23,26 @@ const StockInfo = () => {
 
   useEffect(() => {
     fetchOrderBook();
+    socket.emit('join_stock', symbol);
 
     // Listen for "orderbook_update" event from Server
     socket.on('orderbook_update', (data) => {
         console.log("Real-time update received!");
-        if (data.symbol == "GOOGL" && data && data.bids && data.offers) {
+        if (data.symbol === symbol && data) {
             setOrderBook(data);
         }
     });
 
     // Cleanup listener on unmount
     return () => {
-        socket.off('orderbook_update');
+      socket.emit('leave_stock', symbol);
+      socket.off('orderbook_update');
     };
-  }, []);
+  }, [symbol]);
 
   return (
     <div className="container">
-      <h1 className="stock"><span>{orderBook.currentPrice?.[0]?.price ?? 0}</span> &nbsp; GOOGL</h1>
+      <h1 className="stock"><span>{orderBook.currentPrice?.[0]?.price ?? 0}</span> &nbsp; {symbol}</h1>
 
       <div className="market-container">
         <div className="market-window">

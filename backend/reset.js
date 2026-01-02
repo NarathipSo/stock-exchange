@@ -23,7 +23,7 @@ async function resetSystem() {
         await db.query(`UPDATE users SET balance_fiat = 10000000 WHERE id = 1`);
         
         // NEW: Give User 1 some stocks
-        const symbols = ['GOOGL', 'AAPL', 'MSFT', 'TSLA', 'AMZN'];
+        const symbols = ['GOOGL', 'AAPL', 'MSFT', 'TSLA', 'AMZN', 'META', 'NFLX', 'NVDA', 'BABA', 'IBM'];
         for (const sym of symbols) {
              await db.query(`INSERT INTO user_stocks (user_id, stock_symbol, quantity) VALUES (1, ?, 10000000)`, [sym]);
         }

@@ -12,7 +12,7 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function setupUser() {
     console.log("--- Setting up 50 Test Users ---");
-    const symbols = ['GOOGL', 'AAPL', 'MSFT', 'TSLA', 'AMZN'];
+    const symbols = ['GOOGL', 'AAPL', 'MSFT', 'TSLA', 'AMZN', 'META', 'NFLX', 'NVDA', 'BABA', 'IBM'];
     
     for (let i = 1; i <= 50; i++) {
         // Create User
@@ -71,7 +71,7 @@ async function runBenchmark() {
                 const userId = (i % 50) + 1; 
                 
                 // Distribute load across 5 Symbols to allow parallel processing
-                const symbols = ['GOOGL', 'AAPL', 'MSFT', 'TSLA', 'AMZN'];
+                const symbols = ['GOOGL', 'AAPL', 'MSFT', 'TSLA', 'AMZN', 'META', 'NFLX', 'NVDA', 'BABA', 'IBM'];
                 const symbol = symbols[Math.floor(Math.random() * symbols.length)];
 
                 const type = sentCount % 2 === 0 ? 'BUY' : 'SELL';
