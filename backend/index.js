@@ -42,6 +42,15 @@ app.get('/', (req, res) => {
 io.on('connection', (socket) => {
     console.log('User connected:', socket.id);
 
+    socket.on('join_stock', (symbol) => {
+        socket.join(symbol);
+        console.log(`Socket ${socket.id} joined ${symbol}`);
+    });
+    socket.on('leave_stock', (symbol) => {
+        socket.leave(symbol);
+        console.log(`Socket ${socket.id} left ${symbol}`);
+    });
+
     socket.on('disconnect', () => {
         console.log('User disconnected', socket.id);
     });
@@ -54,10 +63,14 @@ redisSubscriber.subscribe('trade_notifications', 'public_market_ticks', (err, co
 redisSubscriber.on('message', (channel, message) => {
     const data = JSON.parse(message);
     if (channel === 'trade_notifications') {
-        io.emit('orderbook_update', data); 
+        if (data.symbol) {
+            io.to(data.symbol).emit('orderbook_update', data); 
+        }
     } 
     else if (channel === 'public_market_ticks') {
-        io.emit('market_tick', data); 
+         if (data.symbol) {
+            io.to(data.symbol).emit('market_tick', data); 
+        }
     }
 });
 

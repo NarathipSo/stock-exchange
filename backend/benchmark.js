@@ -12,14 +12,24 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function setupUser() {
     console.log("--- Setting up 50 Test Users ---");
+    const symbols = ['GOOGL', 'AAPL', 'MSFT', 'TSLA', 'AMZN'];
+    
     for (let i = 1; i <= 50; i++) {
-        // Creates user if missing, or resets balance if exists.
-        // 100% thread safe.
+        // Create User
         await db.query(`
-            INSERT INTO users (id, username, password_hash, balance_fiat, balance_stock_symbol) 
-            VALUES (${i}, 'user${i}', 'password', 10000000, 10000000)
-            ON DUPLICATE KEY UPDATE balance_fiat = 10000000, balance_stock_symbol = 10000000
+            INSERT INTO users (id, username, password_hash, balance_fiat) 
+            VALUES (${i}, 'user${i}', 'password', 10000000)
+            ON DUPLICATE KEY UPDATE balance_fiat = 10000000
         `);
+        
+        // Give Stocks
+        for (const sym of symbols) {
+            await db.query(`
+                INSERT INTO user_stocks (user_id, stock_symbol, quantity) 
+                VALUES (${i}, ?, 10000000)
+                ON DUPLICATE KEY UPDATE quantity = 10000000
+            `, [sym]);
+        }
     }
 }
 

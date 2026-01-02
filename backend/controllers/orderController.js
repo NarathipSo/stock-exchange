@@ -15,7 +15,6 @@ exports.placeOrder = async (req, res) => {
     try {
         await connection.beginTransaction();
 
-        // 1. Lock User & Check Balance (Keep SQL for safety)
         const [users] = await connection.execute('SELECT * FROM users WHERE id = ? FOR UPDATE', [user_id]);
         if (users.length === 0) throw new Error('User not found');
         const user = users[0];
@@ -25,16 +24,27 @@ exports.placeOrder = async (req, res) => {
             if (parseFloat(user.balance_fiat) < totalValue) throw new Error('Insufficient funds');
             await connection.execute('UPDATE users SET balance_fiat = balance_fiat - ? WHERE id = ?', [totalValue, user_id]);
         } else {
-            if (parseFloat(user.balance_stock_symbol) < quantity) throw new Error('Insufficient stock');
-            await connection.execute('UPDATE users SET balance_stock_symbol = balance_stock_symbol - ? WHERE id = ?', [quantity, user_id]);
+            // SELL: Check Stock Balance in NEW TABLE
+            const [stocks] = await connection.execute(
+                'SELECT quantity FROM user_stocks WHERE user_id = ? AND stock_symbol = ? FOR UPDATE', 
+                [user_id, stock_symbol]
+            );
+            
+            const currentStock = stocks.length > 0 ? parseFloat(stocks[0].quantity) : 0;
+
+            if (currentStock < quantity) throw new Error(`Insufficient ${stock_symbol} stock`);
+
+            // Deduct Stock
+            await connection.execute(
+                'UPDATE user_stocks SET quantity = quantity - ? WHERE user_id = ? AND stock_symbol = ?', 
+                [quantity, user_id, stock_symbol]
+            );
         }
 
         await connection.commit();
         const rawId = await redis.incr('global_order_id');
-        // PAD ID: "1" -> "000000000001" (Ensures String Sort == Integer Sort)
         const orderId = rawId.toString().padStart(12, '0');
 
-        // 3. Create Order Object
         const orderData = {
             id: orderId,
             user_id,
@@ -45,10 +55,7 @@ exports.placeOrder = async (req, res) => {
             timestamp: Date.now()
         };
 
-        // 4. Save Order Details to Redis Hash (for lookup)
         await redis.hset(`order:${orderId}`, orderData);
-
-        // 5. Push to Matching Engine
         await redis.xadd('orders_stream', '*', 'data', JSON.stringify(orderData));
 
         res.status(201).json({ message: 'Order Queued', orderId });

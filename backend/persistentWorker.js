@@ -41,7 +41,7 @@ async function run() {
                     await db.query(`UPDATE users SET balance_fiat = balance_fiat + ? WHERE id = ?`, [totalValue, trade.seller_id]);
 
                     // 3. Credit the Buyer (Stock)
-                    await db.query(`UPDATE users SET balance_stock_symbol = balance_stock_symbol + ? WHERE id = ?`, [trade.quantity, trade.buyer_id]);
+                    await db.query(`UPDATE user_stocks SET quantity = quantity + ? WHERE user_id = ? AND stock_symbol = ?`, [trade.quantity, trade.buyer_id, trade.symbol]);
 
                     // 4. Refund Buyer (Price Improvement)
                     if (trade.buyer_refund > 0) {
