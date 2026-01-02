@@ -3,7 +3,7 @@ const Redis = require('ioredis');
 // Connect to Redis running in Docker
 // standard port is 6379, host is 'localhost' (since we are outside docker calling in)
 const redis = new Redis({
-    host: 'localhost', 
+    host: process.env.REDIS_HOST || 'localhost', 
     port: 6379,
 });
 

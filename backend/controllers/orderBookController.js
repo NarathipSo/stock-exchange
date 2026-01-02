@@ -39,7 +39,11 @@ exports.getOrderBook = async (req, res) => {
         const offers = await buildAndAggregate(askIds, false);
         const lastPrice = await redis.get(`last_price:${symbol}`) || 0;
         
-        res.json({ bids, offers, currentPrice: [{ price: parseFloat(lastPrice) }] });
+        res.json({ 
+            bids: bids.slice(0, 10), 
+            offers: offers.slice(0, 10), 
+            currentPrice: [{ price: parseFloat(lastPrice) }] 
+        });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }

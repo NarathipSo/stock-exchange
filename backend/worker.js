@@ -18,7 +18,7 @@ const fieldsToObject = (fields) => {
 };
 
 async function getOrderBookSnapshot(symbol) {
-    const buyIds = await redis.zrange(`orderbook:${symbol}:bids`, 0, 9); 
+    const buyIds = await redis.zrange(`orderbook:${symbol}:bids`, 0, 9);
     const askIds = await redis.zrange(`orderbook:${symbol}:asks`, 0, 9);
     const lastPrice = await redis.get(`last_price:${symbol}`) || 0;
 
@@ -46,6 +46,7 @@ async function getOrderBookSnapshot(symbol) {
     };
 
     return {
+        symbol,
         bids: await buildAndAggregate(buyIds, true),
         offers: await buildAndAggregate(askIds, false),
         currentPrice: [{ price: parseFloat(lastPrice) }]

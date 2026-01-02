@@ -27,7 +27,7 @@ const StockInfo = () => {
     // Listen for "orderbook_update" event from Server
     socket.on('orderbook_update', (data) => {
         console.log("Real-time update received!");
-        if (data && data.bids && data.offers) {
+        if (data.symbol == "GOOGL" && data && data.bids && data.offers) {
             setOrderBook(data);
         }
     });
