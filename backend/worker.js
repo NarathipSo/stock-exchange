@@ -2,11 +2,19 @@ const redis = require('./queue');
 const matchOrder = require('./services/matchingEngine');
 const db = require('./db');
 
-const STREAM_KEY = 'orders_stream';
-const GROUP_NAME = 'matching_group';
-const CONSUMER_NAME = process.argv[2] || 'matcher_1';
+// Accept symbol from CLI arg: "node worker.js GOOGL"
+const SYMBOL = process.argv[2];
 
-console.log(`Worker Service Started as ${CONSUMER_NAME}...`);
+if (!SYMBOL) {
+    console.error("Error: Please specify a stock symbol to process. Example: node worker.js GOOGL");
+    process.exit(1);
+}
+
+const STREAM_KEY = `orders_stream:${SYMBOL}`;
+const GROUP_NAME = `matching_group_${SYMBOL}`;
+const CONSUMER_NAME = `matcher_${SYMBOL}`;
+
+console.log(`Worker Service Started for ${SYMBOL} (Consumer: ${CONSUMER_NAME})...`);
 
 // helper function 
 const fieldsToObject = (fields) => {
@@ -58,7 +66,7 @@ async function processQueue() {
     // 1. Create Consumer Group (idempotent check)
     try {
         await redis.xgroup('CREATE', STREAM_KEY, GROUP_NAME, '$', 'MKSTREAM');
-        console.log("Matching Consumer Group Created");
+        console.log(`Matching Consumer Group Created for ${SYMBOL}`);
     } catch (err) {
         if (!err.message.includes('BUSYGROUP')) console.error(err);
     }
@@ -69,66 +77,51 @@ async function processQueue() {
             const response = await redis.xreadgroup(
                 'GROUP', GROUP_NAME, CONSUMER_NAME,
                 'BLOCK', '0',
-                'STREAMS', STREAM_KEY, '>' // '>' means new messages
+                'COUNT', '10', // Process batches of 10 for efficiency
+                'STREAMS', STREAM_KEY, '>' 
             );
+
             if (response) {
                 const [stream, messages] = response[0];
-                const tasksBySymbol = {};
-
-                // 1. Group by Symbol (Sharding)
+                
+                // Process SEQUENTIALLY per symbol (strict price-time priority)
                 for (const message of messages) {
                     const id = message[0];
                     const rawData = fieldsToObject(message[1]);
                     const orderData = JSON.parse(rawData.data);
-                    const symbol = orderData.stock_symbol;
 
-                    if (!tasksBySymbol[symbol]) tasksBySymbol[symbol] = [];
-                    tasksBySymbol[symbol].push({ id, orderData });
-                }
+                    // Run the CPU-heavy matching logic
+                    const { matched, symbol, trades } = await matchOrder(orderData);
 
-                // 2. Process Symbols in Parallel
-                const processingPromises = Object.keys(tasksBySymbol).map(async (symbol) => {
-                    const tasks = tasksBySymbol[symbol];
-                    
-                    // Process SEQUENTIALLY per symbol (to maintain strict price-time priority)
-                    for (const task of tasks) {
-                        const { id, orderData } = task;
+                    // PIPELINE SIDE EFFECTS (Reduce RTT)
+                    const pipeline = redis.pipeline();
 
-                        // Run the CPU-heavy matching logic
-                        const { matched, symbol, trades } = await matchOrder(orderData);
-
-                        // PIPELINE SIDE EFFECTS (Reduce RTT)
-                        const pipeline = redis.pipeline();
-
-                        if (symbol) {
-                            const snapshot = await getOrderBookSnapshot(symbol);
-                            pipeline.publish('trade_notifications', JSON.stringify(snapshot));
-                        }
-
-                        if (trades && trades.length > 0) {
-                            for (const trade of trades) {
-                                pipeline.xadd('trades_persistence', '*', 'data', JSON.stringify(trade));
-                                pipeline.xadd('market_events', '*', 'data', JSON.stringify(trade));
-                                
-                                pipeline.publish('public_market_ticks', JSON.stringify({
-                                    type: 'TRADE_TICK',
-                                    symbol: trade.symbol,
-                                    price: trade.price,
-                                    quantity: trade.quantity,
-                                    timestamp: Date.now()
-                                }));
-                            }
-                        }
-
-                        // ACK
-                        pipeline.xack(STREAM_KEY, GROUP_NAME, id);
-                        
-                        // Execute all writes in ONE Round Trip
-                        await pipeline.exec();
+                    if (symbol) {
+                        const snapshot = await getOrderBookSnapshot(symbol);
+                        pipeline.publish('trade_notifications', JSON.stringify(snapshot));
                     }
-                });
 
-                await Promise.all(processingPromises);
+                    if (trades && trades.length > 0) {
+                        for (const trade of trades) {
+                            pipeline.xadd('trades_persistence', '*', 'data', JSON.stringify(trade));
+                            pipeline.xadd('market_events', '*', 'data', JSON.stringify(trade));
+                            
+                            pipeline.publish('public_market_ticks', JSON.stringify({
+                                type: 'TRADE_TICK',
+                                symbol: trade.symbol,
+                                price: trade.price,
+                                quantity: trade.quantity,
+                                timestamp: Date.now()
+                            }));
+                        }
+                    }
+
+                    // ACK
+                    pipeline.xack(STREAM_KEY, GROUP_NAME, id);
+                    
+                    // Execute all writes in ONE Round Trip
+                    await pipeline.exec();
+                }
             }
 
         } catch (error) {
