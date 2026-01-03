@@ -1,0 +1,96 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+    branches: ["main", "master"]
+
+jobs:
+  test-system:
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: password
+          MYSQL_DATABASE: stock_exchange
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
+
+      redis:
+        image: redis:alpine
+        ports:
+          - 6379:6379
+        options: --health-cmd="redis-cli ping" --health-interval=10s --health-timeout=5s --health-retries=3
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Use Node.js 18
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install Backend Dependencies
+        run: |
+          cd backend
+          npm ci
+
+      - name: Initialize Database
+        run: |
+          cd backend
+          node reset.js
+        env:
+          DB_HOST: 127.0.0.1
+          DB_USER: root
+          DB_PASS: password
+          DB_NAME: stock_exchange
+          REDIS_HOST: 127.0.0.1
+          REDIS_PORT: 6379
+
+      - name: Start API Server (Background)
+        run: |
+          cd backend
+          nohup node index.js &
+          sleep 5
+        env:
+          PORT: 3001
+          DB_HOST: 127.0.0.1
+          DB_USER: root
+          DB_PASS: password
+          DB_NAME: stock_exchange
+          REDIS_HOST: 127.0.0.1
+          REDIS_PORT: 6379
+
+      - name: Start Workers (Background)
+        run: |
+          cd backend
+          nohup node start_workers.js &
+          nohup node market_worker.js &
+          nohup node persistentWorker.js &
+          sleep 5
+        env:
+          DB_HOST: 127.0.0.1
+          DB_USER: root
+          DB_PASS: password
+          DB_NAME: stock_exchange
+          REDIS_HOST: 127.0.0.1
+          REDIS_PORT: 6379
+
+      - name: Run Benchmark Test
+        run: |
+          cd backend
+          node benchmark.js
+        env:
+          PORT: 3001
+          DB_HOST: 127.0.0.1
+          DB_USER: root
+          DB_PASS: password
+          DB_NAME: stock_exchange
+          REDIS_HOST: 127.0.0.1
+          REDIS_PORT: 6379
