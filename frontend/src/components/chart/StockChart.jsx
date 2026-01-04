@@ -53,6 +53,12 @@ const StockChart = ({ symbol }) => {
         
         socket.emit('join_stock', symbol);
 
+        const handleConnect = () => {
+            console.log("Reconnected, re-joining:", symbol);
+            socket.emit('join_stock', symbol);
+        };
+        socket.on('connect', handleConnect);
+
         const handleTick = (data) => {
             if (data.symbol === symbol) {
                 const price = parseFloat(data.price);
@@ -78,6 +84,7 @@ const StockChart = ({ symbol }) => {
         return () => {
             socket.emit('leave_stock', symbol);
             socket.off('market_tick', handleTick);
+            socket.off('connect', handleConnect);
             chart.remove();
         };
     }, [symbol]);

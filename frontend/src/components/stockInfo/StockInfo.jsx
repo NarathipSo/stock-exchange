@@ -25,6 +25,13 @@ const StockInfo = ({ symbol }) => {
     fetchOrderBook();
     socket.emit('join_stock', symbol);
 
+    const handleConnect = () => {
+        console.log("Reconnected, re-joining:", symbol);
+        socket.emit('join_stock', symbol);
+    };
+    
+    socket.on('connect', handleConnect);
+
     // Listen for "orderbook_update" event from Server
     socket.on('orderbook_update', (data) => {
         console.log("Real-time update received!");
@@ -37,6 +44,7 @@ const StockInfo = ({ symbol }) => {
     return () => {
       socket.emit('leave_stock', symbol);
       socket.off('orderbook_update');
+      socket.off('connect', handleConnect);
     };
   }, [symbol]);
 
