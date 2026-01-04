@@ -64,7 +64,7 @@ async function resetSystem() {
         await db.query('TRUNCATE TABLE user_stocks');
 
         // Reset User 1 Balance
-        await db.query(`UPDATE users SET balance_fiat = 10000000 WHERE id = 1`);
+        await db.query(`INSERT INTO users (id, username, password_hash, balance_fiat) VALUES (1, 'user1', 'password', 10000000) ON DUPLICATE KEY UPDATE balance_fiat = 10000000`);
         
         // NEW: Give User 1 some stocks
         const symbols = ['GOOGL', 'AAPL', 'MSFT', 'TSLA', 'AMZN', 'META', 'NFLX', 'NVDA', 'BABA', 'IBM'];

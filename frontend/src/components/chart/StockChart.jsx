@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { createChart, CandlestickSeries } from 'lightweight-charts';
+import { createChart } from 'lightweight-charts';
 import './StockChart.css';
 
 import io from 'socket.io-client';
@@ -26,7 +26,7 @@ const StockChart = ({ symbol }) => {
             },
         };
         const chart = createChart(chartContainerRef.current, chartOptions);
-        const candlestickSeries = chart.addSeries(CandlestickSeries, {
+        const candlestickSeries = chart.addCandlestickSeries({
             upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
             wickUpColor: '#26a69a', wickDownColor: '#ef5350',
         });
