@@ -55,14 +55,18 @@ exports.placeOrder = async (req, res) => {
             timestamp: Date.now()
         };
 
-        await redis.hset(`order:${orderId}`, orderData);
+        const pipeline = redis.pipeline();
+
+        await pipeline.hset(`order:${orderId}`, orderData);
         // 5. Push to Matching Engine (Sharded Stream)
         // Stream Key: orders_stream:GOOGL, orders_stream:AAPL, etc.
         const streamKey = `orders_stream:${stock_symbol}`;
-        await redis.xadd(streamKey, '*', 'data', JSON.stringify(orderData));
+        await pipeline.xadd(streamKey, '*', 'data', JSON.stringify(orderData));
+
+        await pipeline.exec()
 
         res.status(201).json({ message: 'Order Queued', orderId });
-        // console.log(`Order ${orderId} added to orders_stream`);
+        console.log(`Order ${orderId} added to orders_stream`);
 
     } catch (error) {
         await connection.rollback();

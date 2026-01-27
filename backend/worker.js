@@ -99,6 +99,8 @@ async function processQueue() {
                     if (symbol) {
                         const snapshot = await getOrderBookSnapshot(symbol);
                         pipeline.publish('trade_notifications', JSON.stringify(snapshot));
+                        
+                        // pipeline.publish('trade_notifications', JSON.stringify({ symbol }));
                     }
 
                     if (trades && trades.length > 0) {
